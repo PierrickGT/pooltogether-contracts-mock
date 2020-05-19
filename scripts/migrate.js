@@ -28,7 +28,7 @@ if (program.rinkeby) {
   networkConfig = '.openzeppelin/rinkeby.json'
 } else {
   console.log(chalk.green('Selected network is local'))
-  
+
   // The network that the oz-console app should talk to.  (should really just use the ozNetworkName)
   consoleNetwork = 'http://localhost:8545'
 
@@ -65,7 +65,7 @@ async function mintToMoneyMarketAndWallets(context, tokenContract, moneyMarketAd
     for (i = 0; i < extraAddresses.length; i++) {
       await tokenContract.mint(extraAddresses[i], ethers.utils.parseEther(amountInEth))
       if (program.verbose) console.log(chalk.dim(`Minted to ${extraAddresses[i]}`))
-    } 
+    }
   }
 }
 
@@ -86,7 +86,7 @@ async function migrate() {
     provider,
     signer
   } = context
-  
+
   await migration.migrate(20, () => {
     runShell(`oz create Sai ${ozOptions} --network ${ozNetworkName} --init initialize --args '${signer.address},"Sai","Sai",18'`)
   })
@@ -158,7 +158,7 @@ async function migrate() {
   await migration.migrate(60, async () => {
     await context.contracts.PoolDai.initMigration(context.contracts.ScdMcdMigrationMock.address, context.contracts.PoolSai.address)
   })
-  
+
   await migration.migrate(65, () => mintToMoneyMarketAndWallets(context, sai, context.contracts.cSai.address, '10000'))
 
   await migration.migrate(70, () => mintToMoneyMarketAndWallets(context, context.contracts.Dai, context.contracts.cDai.address, '10000'))
@@ -210,10 +210,15 @@ async function migrate() {
     runShell(`oz create UsdcPod ${ozOptions} --network ${ozNetworkName} --init initialize --args ${context.contracts.PoolUsdc.address}`)
     context = loadContext()
   })
+
+  await migration.migrate(140, async () => {
+    runShell(`oz create DonutPod ${ozOptions} --network ${ozNetworkName} --init initialize --args ${context.contracts.PoolDai.address}`)
+    context = loadContext()
+  })
 }
 
 console.log(chalk.yellow('Started...'))
-migrate().then(() =>{ 
+migrate().then(() =>{
   console.log(chalk.green('Done!'))
 }).catch(error => {
   console.error(`Could not migrate: ${error.message}`, error)
