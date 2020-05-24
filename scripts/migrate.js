@@ -11,23 +11,10 @@ const ethers = require('ethers')
 
 let consoleNetwork, networkConfig, ozNetworkName
 
-// TODO: retrieve accounts from ganache
-const accounts = [
-  '0xae86df2636b14aa7b5d0eb33013f3a149a0980aa',
-  '0xe40e26e2a19538136ea298f4cbd278e569ba04e3',
-  '0x708c575f29bc7f020afb4ae7bf6f2eb03ef42855',
-  '0x5ead33323b89a8413145c6b67d17766e2396b482',
-  '0xcdfc59e0db7975e80f0c2267b9fde9d8237f8df9',
-  '0x714360da4e1a8b854a5ae0f0bfd73d758139d770',
-  '0x6b685e39896f2fa2ca7c29610de1fb10e3c0d4a4',
-  '0xaa6cd0523d8fe988407b7d76506d585a9c1cc32d',
-  '0xc7d435fc96a5bb0ece3efc47da402b6dd8e973d2',
-  '0x6c0682a45b21a41ac02f99f19c34b71b8af98f63'
-]
-
 const commander = require('commander');
 const program = new commander.Command()
 program.option('-r --rinkeby', 'run the migrations against rinkeby', () => true)
+program.option('-k --kovan', 'run the migrations against kovan', () => true)
 program.option('-v --verbose', 'make all commands verbose', () => true)
 program.parse(process.argv)
 
@@ -41,6 +28,16 @@ if (program.rinkeby) {
 
   // The OpenZeppelin SDK network config that oz-console should use as reference
   networkConfig = '.openzeppelin/rinkeby.json'
+} else if (program.kovan) {
+  console.log(chalk.green('Selected network is kovan'))
+  // The network that the oz-console app should talk to.  (should really just use the ozNetworkName)
+  consoleNetwork = 'kovan'
+
+  // The OpenZeppelin SDK network name
+  ozNetworkName = 'kovan'
+
+  // The OpenZeppelin SDK network config that oz-console should use as reference
+  networkConfig = '.openzeppelin/kovan.json'
 } else {
   console.log(chalk.green('Selected network is local'))
 
@@ -194,14 +191,30 @@ async function migrate() {
     console.log('Minting DAI to ScdMcdMigration contract and accounts')
     const tx = await context.contracts.Dai.mint(context.contracts.ScdMcdMigrationMock.address, ethers.utils.parseEther('5000000'))
 
-    accounts.map(async (account) => {
-      const transaction = await context.contracts.Dai.mint(
-        account,
-        ethers.utils.parseEther('5000000'),
-      );
+    // TODO: retrieve accounts from ganache
+    const accounts = [
+        '0xae86df2636b14aa7b5d0eb33013f3a149a0980aa',
+        '0xe40e26e2a19538136ea298f4cbd278e569ba04e3',
+        '0x708c575f29bc7f020afb4ae7bf6f2eb03ef42855',
+        '0x5ead33323b89a8413145c6b67d17766e2396b482',
+        '0xcdfc59e0db7975e80f0c2267b9fde9d8237f8df9',
+        '0x714360da4e1a8b854a5ae0f0bfd73d758139d770',
+        '0x6b685e39896f2fa2ca7c29610de1fb10e3c0d4a4',
+        '0xaa6cd0523d8fe988407b7d76506d585a9c1cc32d',
+        '0xc7d435fc96a5bb0ece3efc47da402b6dd8e973d2',
+        '0x6c0682a45b21a41ac02f99f19c34b71b8af98f63',
+    ];
 
-      await context.provider.waitForTransaction(transaction.hash);
-    })
+    accounts.map(async (account) => {
+        const transaction = await context.contracts.Dai.mint(
+            account,
+            ethers.utils.parseEther('5000000'),
+        );
+
+        await context.provider.waitForTransaction(
+            transaction.hash,
+        );
+    });
 
     await context.provider.waitForTransaction(tx.hash)
 

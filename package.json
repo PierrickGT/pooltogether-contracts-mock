@@ -31,7 +31,7 @@
     "push-and-update-rinkeby": "yarn push-rinkeby && yarn update-all-rinkeby",
     "push-kovan": "oz push --network kovan",
     "console-kovan": "oz-console --network kovan -m \"$HDWALLET_MNEMONIC\"",
-    "migrate-kovan": "./scripts/migrate.js -r",
+    "migrate-kovan": "./scripts/migrate.js -k",
     "session-kovan": "oz session --from $ADMIN_ADDRESS --network kovan --expires 7200 --timeout 3600",
     "update-all-kovan": "oz update --all --network kovan --from $ADMIN_ADDRESS",
     "push-and-update-kovan": "yarn push-kovan && yarn update-all-kovan",
