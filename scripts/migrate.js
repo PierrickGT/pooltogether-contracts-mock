@@ -3,6 +3,7 @@ const assert = require('assert')
 const chalk = require('chalk')
 const runShell = require('./runShell')
 const { Project } = require('oz-migrate')
+const { exec } = require('./exec');
 
 const { buildContext } = require('oz-console')
 
@@ -13,6 +14,7 @@ let consoleNetwork, networkConfig, ozNetworkName
 const commander = require('commander');
 const program = new commander.Command()
 program.option('-r --rinkeby', 'run the migrations against rinkeby', () => true)
+program.option('-k --kovan', 'run the migrations against kovan', () => true)
 program.option('-v --verbose', 'make all commands verbose', () => true)
 program.parse(process.argv)
 
@@ -26,9 +28,19 @@ if (program.rinkeby) {
 
   // The OpenZeppelin SDK network config that oz-console should use as reference
   networkConfig = '.openzeppelin/rinkeby.json'
+} else if (program.kovan) {
+  console.log(chalk.green('Selected network is kovan'))
+  // The network that the oz-console app should talk to.  (should really just use the ozNetworkName)
+  consoleNetwork = 'kovan'
+
+  // The OpenZeppelin SDK network name
+  ozNetworkName = 'kovan'
+
+  // The OpenZeppelin SDK network config that oz-console should use as reference
+  networkConfig = '.openzeppelin/kovan.json'
 } else {
   console.log(chalk.green('Selected network is local'))
-  
+
   // The network that the oz-console app should talk to.  (should really just use the ozNetworkName)
   consoleNetwork = 'http://localhost:8545'
 
@@ -50,6 +62,14 @@ function loadContext() {
   })
 }
 
+function generateSecret(poolSeed, drawId) {
+    return ethers.utils.solidityKeccak256(['bytes32', 'uint256'], [poolSeed, drawId]);
+}
+
+function generateSecretHash(secret, salt) {
+    return ethers.utils.solidityKeccak256(['bytes32', 'bytes32'], [secret, salt]);
+}
+
 async function mintToMoneyMarketAndWallets(context, tokenContract, moneyMarketAddress, amountInEth) {
   await tokenContract.mint(moneyMarketAddress, ethers.utils.parseEther('10000000'))
   let i;
@@ -65,7 +85,7 @@ async function mintToMoneyMarketAndWallets(context, tokenContract, moneyMarketAd
     for (i = 0; i < extraAddresses.length; i++) {
       await tokenContract.mint(extraAddresses[i], ethers.utils.parseEther(amountInEth))
       if (program.verbose) console.log(chalk.dim(`Minted to ${extraAddresses[i]}`))
-    } 
+    }
   }
 }
 
@@ -86,7 +106,11 @@ async function migrate() {
     provider,
     signer
   } = context
-  
+
+  const overrides = {
+      gasLimit: 6000000,
+  };
+
   await migration.migrate(20, () => {
     runShell(`oz create Sai ${ozOptions} --network ${ozNetworkName} --init initialize --args '${signer.address},"Sai","Sai",18'`)
   })
@@ -158,14 +182,39 @@ async function migrate() {
   await migration.migrate(60, async () => {
     await context.contracts.PoolDai.initMigration(context.contracts.ScdMcdMigrationMock.address, context.contracts.PoolSai.address)
   })
-  
+
   await migration.migrate(65, () => mintToMoneyMarketAndWallets(context, sai, context.contracts.cSai.address, '10000'))
 
   await migration.migrate(70, () => mintToMoneyMarketAndWallets(context, context.contracts.Dai, context.contracts.cDai.address, '10000'))
 
   await migration.migrate(75, async () => {
-    console.log('Minting DAI to ScdMcdMigration contract')
+    console.log('Minting DAI to ScdMcdMigration contract and accounts')
     const tx = await context.contracts.Dai.mint(context.contracts.ScdMcdMigrationMock.address, ethers.utils.parseEther('5000000'))
+
+    // TODO: retrieve accounts from ganache
+    const accounts = [
+        '0xae86df2636b14aa7b5d0eb33013f3a149a0980aa',
+        '0xe40e26e2a19538136ea298f4cbd278e569ba04e3',
+        '0x708c575f29bc7f020afb4ae7bf6f2eb03ef42855',
+        '0x5ead33323b89a8413145c6b67d17766e2396b482',
+        '0xcdfc59e0db7975e80f0c2267b9fde9d8237f8df9',
+        '0x714360da4e1a8b854a5ae0f0bfd73d758139d770',
+        '0x6b685e39896f2fa2ca7c29610de1fb10e3c0d4a4',
+        '0xaa6cd0523d8fe988407b7d76506d585a9c1cc32d',
+        '0xc7d435fc96a5bb0ece3efc47da402b6dd8e973d2',
+        '0x6c0682a45b21a41ac02f99f19c34b71b8af98f63',
+    ];
+
+    accounts.map(async (account) => {
+        const transaction = await context.contracts.Dai.mint(
+            account,
+            ethers.utils.parseEther('5000000'),
+        );
+
+        await context.provider.waitForTransaction(
+            transaction.hash,
+        );
+    });
 
     await context.provider.waitForTransaction(tx.hash)
 
@@ -210,10 +259,127 @@ async function migrate() {
     runShell(`oz create UsdcPod ${ozOptions} --network ${ozNetworkName} --init initialize --args ${context.contracts.PoolUsdc.address}`)
     context = loadContext()
   })
+
+  await migration.migrate(140, async () => {
+    runShell(`oz create DonutPod ${ozOptions} --network ${ozNetworkName} --init initialize --args ${context.contracts.PoolDai.address}`)
+    context = loadContext()
+  })
+
+  await migration.migrate(150, async () => {
+    context = loadContext()
+
+    const provider = context.provider;
+    const signer = provider.getSigner(process.env.ADMIN_ADDRESS);
+    const pool = context.contracts.PoolDai.connect(signer);
+
+    let currentOpenDrawId = await pool.currentOpenDrawId();
+    let nextDrawId = currentOpenDrawId.add('1');
+    let currentCommittedDrawId = await pool.currentCommittedDrawId();
+
+    let poolSeed = process.env.SECRET_SEED;
+    let poolSaltSeed = process.env.SALT_SEED;
+
+    if (!poolSeed || !poolSaltSeed) {
+      console.error('no seed or salt defined');
+      return;
+    }
+
+    console.log({
+      currentCommittedDrawId: currentCommittedDrawId.toString(),
+      currentOpenDrawId: currentOpenDrawId.toString(),
+      nextDrawId: nextDrawId.toString(),
+    });
+
+    // if no pool is committed
+    if (currentCommittedDrawId.toString() === '0') {
+      console.log(chalk.red('No draw is committed!'));
+    } else {
+      let lastSalt = generateSecret(poolSaltSeed, currentCommittedDrawId);
+      let lastSecret = generateSecret(poolSeed, currentCommittedDrawId);
+
+      await exec(provider, pool.lockTokens());
+      await exec(provider, pool.reward(lastSecret, lastSalt, overrides));
+
+      let draw = await pool.getDraw(currentCommittedDrawId);
+      let winnerBalance = await pool.balanceOf(draw.winner);
+
+      console.log(
+        chalk.green(
+          `Address ${draw.winner} won ${ethers.utils.formatEther(
+            draw.netWinnings,
+          )} with ${ethers.utils.formatEther(winnerBalance)}`,
+        ),
+      );
+    }
+
+    console.log(chalk.green('Done reward.'));
+  });
+
+  await migration.migrate(160, async () => {
+    context = loadContext();
+
+    const { provider, contracts } = context;
+    const signer = provider.getSigner(process.env.ADMIN_ADDRESS);
+    let pool;
+
+    pool = contracts.PoolDai.connect(signer);
+
+    let currentOpenDrawId = await pool.currentOpenDrawId();
+    let nextDrawId = currentOpenDrawId.add('1');
+    let currentCommittedDrawId = await pool.currentCommittedDrawId();
+
+    let poolSeed = process.env.SECRET_SEED;
+    let poolSaltSeed = process.env.SALT_SEED;
+
+    if (!poolSeed || !poolSaltSeed) {
+        throw new Error('no seed or salt defined');
+    }
+
+    let secret = generateSecret(poolSeed, nextDrawId);
+    let salt = generateSecret(poolSaltSeed, nextDrawId);
+    let secretHash = generateSecretHash(secret, salt);
+
+    console.log({
+        currentCommittedDrawId: currentCommittedDrawId.toString(),
+        currentOpenDrawId: currentOpenDrawId.toString(),
+        nextDrawId: nextDrawId.toString(),
+    });
+
+    // if no pool is committed
+    if (currentCommittedDrawId.toString() === '0') {
+      await exec(provider, pool.openNextDraw(secretHash, overrides));
+    } else {
+      let lastSalt = generateSecret(poolSaltSeed, currentCommittedDrawId);
+      let lastSecret = generateSecret(poolSeed, currentCommittedDrawId);
+
+      if (await pool.isLocked()) {
+          throw new Error('Pool is already locked');
+      }
+      await exec(provider, pool.lockTokens());
+      await exec(
+          provider,
+          pool.rewardAndOpenNextDraw(secretHash, lastSecret, lastSalt, overrides),
+      );
+
+      let draw = await pool.getDraw(currentCommittedDrawId);
+
+      let winnerBalance = await pool.balanceOf(draw.winner);
+
+      console.log(
+          chalk.green(
+              `Address ${draw.winner} won ${ethers.utils.formatEther(
+                  draw.netWinnings,
+              )} with ${ethers.utils.formatEther(winnerBalance)}`,
+          ),
+      );
+
+      console.log(chalk.green('Done reward and open.'));
+    }
+  });
 }
 
 console.log(chalk.yellow('Started...'))
-migrate().then(() =>{ 
+migrate().then(() =>{
   console.log(chalk.green('Done!'))
 }).catch(error => {
   console.error(`Could not migrate: ${error.message}`, error)
